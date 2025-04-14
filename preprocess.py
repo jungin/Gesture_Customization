@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from pandarallel import pandarallel
 from variables import train_dir, train_subset_dir, preprocessed_train_dir, preprocessed_train_subset_dir
+from variables import val_dir, preprocessed_val_dir
 import logging
 from tqdm import tqdm
 import multiprocessing
@@ -312,4 +313,4 @@ def main(jester_root_dir=None, output_dir=None, subset=True, batch_size=100, num
 if __name__ == "__main__":
     mp_logger = multiprocessing.log_to_stderr()
     mp_logger.setLevel(logging.WARNING)
-    main(num_workers=8, subset=False)
+    main(num_workers=8, subset=False, jester_root_dir=val_dir, output_dir=preprocessed_val_dir)

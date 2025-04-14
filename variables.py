@@ -12,5 +12,7 @@ preprocessed_train_dir = data_dir + 'train_preprocessed/'
 preprocessed_test_dir = data_dir + 'test_preprocessed/'
 preprocessed_val_dir = data_dir + 'val_preprocessed/'
 
-preprocessed_train_subset_dir = data_dir + 'train_subset_preprocessed/'
 train_subset_dir = data_dir + 'train_subset/'
+preprocessed_train_subset_dir = data_dir + 'train_subset_preprocessed/'
+
+JESTER_CLASSES = 27

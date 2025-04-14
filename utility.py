@@ -2,7 +2,28 @@ import os
 import shutil
 import random
 import pandas as pd
+import numpy as np
 from variables import data_dir, train_dir
+
+
+def load_data(label_file, data_dir):
+    # load label file
+    df = pd.read_csv(label_file)  # video_id, label, label id 컬럼 포함
+
+    X = []
+    y = []
+
+    for _, row in df.iterrows():
+        npy_path = os.path.join(data_dir, f"{row['video_id']}.npy")
+        if os.path.exists(npy_path):
+            X.append(np.load(npy_path))  # shape: (37, 21, 3)
+            y.append(row['label_id'])
+
+    X = np.array(X)  # shape: (N, 37, 21, 3)
+    y = np.array(y)
+    print(f"X shape: {X.shape}, y shape: {y.shape}")
+
+    return X, y
 
 def create_subset(input_dir, output_dir, subset_size=1000):
     """
