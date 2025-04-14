@@ -2,9 +2,13 @@ import os
 import glob
 import cv2
 import numpy as np
-from tqdm import tqdm
-from multiprocessing import Pool
-from variables import train_dir
+import pandas as pd
+from pandarallel import pandarallel
+from variables import train_dir, train_subset_dir, preprocessed_train_dir, preprocessed_train_subset_dir
+
+# 초기화
+pandarallel.initialize(progress_bar=True)
+
 
 def moving_average_filter(seq, window_size=3):
     """
@@ -100,13 +104,21 @@ def process_jester_dataset_parallel(jester_root_dir, output_dir, num_workers=4):
     os.makedirs(output_dir, exist_ok=True)
     sample_dirs = sorted([p for p in glob.glob(os.path.join(jester_root_dir, '*')) if os.path.isdir(p)])
     
-    with Pool(num_workers) as pool:
-        for sample_id, skeleton_seq in tqdm(pool.imap_unordered(process_sample, sample_dirs), total=len(sample_dirs)):
-            np.save(os.path.join(output_dir, f"{sample_id}.npy"), skeleton_seq)
+    # DataFrame으로 감싸기
+    df = pd.DataFrame({'path': sample_dirs})
+    
+    # 병렬 처리 함수
+    def process_and_save(path):
+        sample_id, skeleton_seq = process_sample(path)
+        np.save(os.path.join(output_dir, f"{sample_id}.npy"), skeleton_seq)
+        return sample_id  # Optional: 로그용
+
+    # 병렬 실행
+    df['status'] = df['path'].parallel_apply(process_and_save)
 
 if __name__ == '__main__':
     # 병렬 처리 이전에 부모 프로세스에서는 GPU 관련 라이브러리를 임포트하지 않도록 주의합니다.
-    jester_root_dir = "your_jester_dataset_path"
-    output_dir = "your_output_directory"
+    jester_root_dir = train_subset_dir
+    output_dir = preprocessed_train_subset_dir
     # 프로세스 수는 시스템 코어 개수에 맞게 설정하는 것이 좋습니다.
     process_jester_dataset_parallel(jester_root_dir, output_dir, num_workers=4)
