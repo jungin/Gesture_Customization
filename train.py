@@ -41,12 +41,22 @@ def build_tcn_model(input_shape, num_classes):
 X_train = X_train.reshape(-1, 37, 21*3)  # 즉, (samples, 37, 63)로 변경
 X_val = X_val.reshape(-1, 37, 21*3)  # 즉, (samples, 37, 63)로 변경
 
+# 1. define model
 model = build_tcn_model((37, 21*3), JESTER_CLASSES)
 model.compile(optimizer='adamW', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# 2. train model
 model.fit(X_train, y_train, epochs=30, batch_size=32, validation_data=(X_val, y_val))
+model.save("full_tcn_model.keras")
+
+# # 3. extract features
+# feature_extractor = tf.keras.Model(inputs=model.input, outputs=model.layers[-2].output)
+# feature_extractor.save("feature_extractor_model")
 
 
-
+# # 4. extract features from new gesture 
+# X_custom = np.load("your_custom.npy").reshape(1, 37, 63)
+# feature_vector = feature_extractor.predict(X_custom)  # shape: (1, 128)
 
 
 
