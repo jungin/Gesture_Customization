@@ -14,5 +14,6 @@ preprocessed_val_dir = data_dir + 'val_preprocessed/'
 
 train_subset_dir = data_dir + 'train_subset/'
 preprocessed_train_subset_dir = data_dir + 'train_subset_preprocessed/'
+preprocessed_val_subset_dir = data_dir + 'val_subset_preprocessed/'
 
 JESTER_CLASSES = 27
