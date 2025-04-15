@@ -15,18 +15,16 @@ from variables import preprocessed_train_dir, preprocessed_val_dir,\
                        
 
 # path
-# train_dir = preprocessed_train_dir                # .npy 파일들이 있는 경로
-# val_dir = preprocessed_val_dir                    # .npy 파일들이 있는 경로
-train_dir = preprocessed_train_subset_dir         # .npy 파일들이 있는 경로
-val_dir = preprocessed_val_subset_dir                    # .npy 파일들이 있는 경로
+train_dir = preprocessed_train_dir                # .npy 파일들이 있는 경로
+val_dir = preprocessed_val_dir                    # .npy 파일들이 있는 경로
+# train_dir = preprocessed_train_subset_dir         # .npy 파일들이 있는 경로
+# val_dir = preprocessed_val_subset_dir                    # .npy 파일들이 있는 경로
 train_label_file = train_csv                         # 라벨 CSV 경로
 val_label_file = val_csv                             # 라벨 CSV 경로
 
 
 X_train, y_train = load_data(train_label_file, train_dir)
 X_val, y_val = load_data(val_label_file, val_dir)
-
-
 
 def build_tcn_model(input_shape, num_classes):
     inputs = layers.Input(shape=input_shape)  # (37, 63)
@@ -40,27 +38,12 @@ def build_tcn_model(input_shape, num_classes):
     model = models.Model(inputs, outputs)
     return model
 
-
-
-
-# model = models.Sequential([
-#     layers.Input(shape=(37, 63)),
-#     layers.Conv1D(64, kernel_size=3, activation='relu', padding='same'),
-#     layers.MaxPooling1D(pool_size=2),
-#     layers.Conv1D(128, kernel_size=3, activation='relu', padding='same'),
-#     layers.GlobalAveragePooling1D(),
-#     layers.Dense(128, activation='relu'),
-#     layers.Dense(JESTER_CLASSES, activation='softmax')
-# ])
-
-# model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-# model.summary()
-
 X_train = X_train.reshape(-1, 37, 21*3)  # 즉, (samples, 37, 63)로 변경
 X_val = X_val.reshape(-1, 37, 21*3)  # 즉, (samples, 37, 63)로 변경
 
 model = build_tcn_model((37, 21*3), JESTER_CLASSES)
-model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_val, y_val))
+model.compile(optimizer='adamW', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model.fit(X_train, y_train, epochs=30, batch_size=32, validation_data=(X_val, y_val))
 
 
 
