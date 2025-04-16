@@ -29,7 +29,7 @@ files = new_df['video_id'].to_list()
 # X_test: shape (N, 37, 63) 
 X_test = []
 for file in files:
-    file_path = os.path.join(preprocessed_test_dir, file)
+    file_path = os.path.join(preprocessed_test_dir, file + ".npy")
     X_test.append(np.load(file_path))
 X_test = np.array(X_test)  # shape: (N, 37, 63)
 X_test = X_test.reshape(-1, 37, 21*3)  # shape: (N, 37, 63)
@@ -60,3 +60,18 @@ prototypes = compute_prototypes(feature_vector, y_test)
 # 프로토타입 출력 (예: 각 클래스별 평균 임베딩 벡터)
 for label, proto in prototypes.items():
     print("Label:", label, "Prototype shape:", proto.shape)
+
+# 새로운 제스처에 대해 임베딩 추출 및 분류
+new_gesture = np.load(os.path.join(preprocessed_test_dir, '505.npy')).reshape(1, 37, 63)  # 새 제스처 샘플
+new_feature = feature_extractor.predict(new_gesture)  # (1, 128)
+
+from scipy.spatial.distance import cdist
+def predict_by_prototypes(query_feat, prototypes, metric='euclidean'):
+    proto_matrix = np.stack(list(prototypes.values()))
+    proto_labels = list(prototypes.keys())
+    distances = cdist(query_feat, proto_matrix, metric=metric)
+    pred_index = np.argmin(distances)
+    return proto_labels[pred_index]
+
+predicted_label = predict_by_prototypes(new_feature, prototypes)
+print("Predicted custom gesture label:", predicted_label)
