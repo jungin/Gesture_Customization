@@ -29,7 +29,7 @@ files = new_df['video_id'].to_list()
 def load_data(files, df):
     X, y = [], []
     for file in files:
-        file_path = os.path.join(preprocessed_test_dir, file + ".npy")
+        file_path = os.path.join(preprocessed_test_dir, str(file) + ".npy")
         X.append(np.load(file_path))
         
         label_id = df[df['video_id'] == file]['label_id'].values[0]
@@ -46,7 +46,7 @@ def load_data(files, df):
 # X_test: shape (N, 37, 63) 
 X_test = []
 for file in files:
-    file_path = os.path.join(preprocessed_test_dir, file + ".npy")
+    file_path = os.path.join(preprocessed_test_dir, str(file) + ".npy")
     X_test.append(np.load(file_path))
 X_test = np.array(X_test)  # shape: (N, 37, 63)
 X_test = X_test.reshape(-1, 37, 21*3)  # shape: (N, 37, 63)
