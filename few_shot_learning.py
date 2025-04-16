@@ -25,6 +25,23 @@ new_df = df[df['label_id'].isin(new)]
 new_df = new_df.groupby('label_id').head(5)
 files = new_df['video_id'].to_list()
 
+
+def load_data(files, df):
+    X, y = [], []
+    for file in files:
+        file_path = os.path.join(preprocessed_test_dir, file + ".npy")
+        X.append(np.load(file_path))
+        
+        label_id = df[df['video_id'] == file]['label_id'].values[0]
+        y.append(label_id)
+
+    X = np.array(X)  # shape: (N, 37, 63)
+    X = X.reshape(-1, 37, 21*3)  # shape: (N, 37, 63)
+    
+    y = np.array(y)  # shape: (N,)
+
+    return X, y
+
 # load the data
 # X_test: shape (N, 37, 63) 
 X_test = []
@@ -73,5 +90,35 @@ def predict_by_prototypes(query_feat, prototypes, metric='euclidean'):
     pred_index = np.argmin(distances)
     return proto_labels[pred_index]
 
-predicted_label = predict_by_prototypes(new_feature, prototypes)
-print("Predicted custom gesture label:", predicted_label)
+# predicted_label = predict_by_prototypes(new_feature, prototypes)
+# print("Predicted custom gesture label:", predicted_label)
+
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+# test set에 대해 프로토타입 분류 수행
+
+# extract three gestures
+# pick five samples for each gesture
+test_df = df[df['label_id'].isin(new)] \
+           .groupby('label_id', group_keys=False) \
+           .sample(n=5, random_state=42)
+files = test_df['video_id'].to_list()
+
+X_test, y_test = load_data(files, test_df)
+y_pred = []
+for i in range(len(X_test)):
+    feat = feature_extractor.predict(X_test[i:i+1])
+    pred = predict_by_prototypes(feat, prototypes)
+    y_pred.append(pred)
+
+# 실제 라벨과 예측 라벨
+y_true = y_test  # y_test는 이미 정수형 라벨로 되어 있음
+
+# Calculate evaluation metrics
+acc = accuracy_score(y_true, y_pred)
+cm = confusion_matrix(y_true, y_pred)
+report = classification_report(y_true, y_pred, target_names=[str(label) for label in np.unique(y_true)])
+
+print("Accuracy:", acc)
+print("Confusion Matrix:\n", cm)
+print("Classification Report:\n", report)
