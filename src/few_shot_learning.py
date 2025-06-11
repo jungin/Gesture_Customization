@@ -19,7 +19,6 @@ def load_data(files, df):
 
     X = np.array(X)  # shape: (N, 37, 63)
     X = X.reshape(-1, 37, 21*3)  # shape: (N, 37, 63)
-    
     y = np.array(y)  # shape: (N,)
 
     return X, y
