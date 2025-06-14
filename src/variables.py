@@ -1,23 +1,40 @@
-data_dir = '../../Datasets/20BN_Jester_Dataset/'
+import os
 
-train_dir = data_dir + 'Train/'
-test_dir = data_dir + 'Test/'
-val_dir = data_dir + 'Validation/'
+FRAMES = 37
+JESTER_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/jester"
+CONGD_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/congd"
 
-train_csv = data_dir + 'Train.csv'
-test_csv = data_dir + 'Test.csv'
-val_csv = data_dir + 'Validation.csv'
+JESTER_INPUT_DIR = os.path.join(JESTER_BASE_DIR, "raw_data")
+JESTER_OUTPUT_DIR = os.path.join(JESTER_BASE_DIR, "skeletons")
+CONGD_INPUT_DIR = os.path.join(CONGD_BASE_DIR, "raw_data")
+CONGD_OUTPUT_DIR = os.path.join(CONGD_BASE_DIR, "skeletons")
 
-# preprocessed_train_dir = data_dir + 'train_preprocessed/'
-# preprocessed_test_dir = data_dir + 'test_preprocessed/'
-# preprocessed_val_dir = data_dir + 'val_preprocessed/'
-preprocessed_train_dir = data_dir + 'new/train/'
-preprocessed_test_dir = data_dir + 'new/test/'
-preprocessed_val_dir = data_dir + 'new/val/'
+JESTER_LABELS = {0: 'Doing other things',
+                 1: 'Drumming Fingers',
+                 2: 'No gesture',
+                 3: 'Pulling Hand In',
+                 4: 'Pulling Two Fingers In',
+                 5: 'Pushing Hand Away',
+                 6: 'Pushing Two Fingers Away',
+                 7: 'Rolling Hand Backward',
+                 8: 'Rolling Hand Forward',
+                 9: 'Shaking Hand',
+                 10: 'Sliding Two Fingers Down',
+                 11: 'Sliding Two Fingers Left',
+                 12: 'Sliding Two Fingers Right',
+                 13: 'Sliding Two Fingers Up',
+                 14: 'Stop Sign',
+                 15: 'Swiping Down',
+                 16: 'Swiping Left',
+                 17: 'Swiping Right',
+                 18: 'Swiping Up',
+                 19: 'Thumb Down',
+                 20: 'Thumb Up',
+                 21: 'Turning Hand Clockwise',
+                 22: 'Turning Hand Counterclockwise',
+                 23: 'Zooming In With Full Hand',
+                 24: 'Zooming In With Two Fingers',
+                 25: 'Zooming Out With Full Hand',
+                 26: 'Zooming Out With Two Fingers'}
 
 
-train_subset_dir = data_dir + 'train_subset/'
-preprocessed_train_subset_dir = data_dir + 'train_subset_preprocessed/'
-preprocessed_val_subset_dir = data_dir + 'val_subset_preprocessed/'
-
-JESTER_CLASSES = 27
