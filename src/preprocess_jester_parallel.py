@@ -63,7 +63,7 @@ def process_sample_jester(split, sample, mapping):
         arr = interpolate_missing_frames(arr)
 
     # (4) 저장
-    out_path = os.path.join(out_dir, f"{sample}_{label}.npy")
+    out_path = os.path.join(out_dir, f"{sample}_lbl{label}.npy")
     np.save(out_path, arr)
     return f"[SAVED] {out_path} → {arr.shape}, label={label}"
 

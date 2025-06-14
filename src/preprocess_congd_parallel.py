@@ -66,7 +66,7 @@ def process_video(args):
 
         out_name = f"{split}_{class_folder}_{vid_name}_{start:03d}-{end:03d}_lbl{label}.npy"
         out_path = os.path.join(CONGD_OUTPUT_DIR, out_name)
-        # np.save(out_path, seg_seq)
+        np.save(out_path, seg_seq)
         out_logs.append(f"Saved: {out_path} → {seg_seq.shape}, label={label}")
 
     return "\n".join(out_logs)
