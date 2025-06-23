@@ -28,6 +28,11 @@ def pad_or_trim(seq, target_len):
         return seq[idxs]
     
 
+def compute_joint_movement_variance(seq):
+    diffs = np.diff(seq, axis=0)  # (T-1, 42, 3)
+    movement = np.linalg.norm(diffs, axis=2)  # (T-1, 42)
+    return movement.var()
+
 
 def interpolate_missing_frames(seq):
     """
@@ -58,3 +63,4 @@ def interpolate_missing_frames(seq):
             # 실제 보간
             new_seq[:, j, c] = np.interp(frame_idx, valid, ts[valid])
     return new_seq
+

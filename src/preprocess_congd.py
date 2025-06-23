@@ -2,12 +2,23 @@ import os
 import glob
 import numpy as np
 import cv2
-import mediapipe as mp
 from collections import defaultdict
 
-from variables import *
-from utility import hands, \
-                    pad_or_trim, interpolate_missing_frames
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.framework.formats import image_format_pb2
+from mediapipe import Image
+
+from src.variables import *
+from src.utility import pad_or_trim, compute_joint_movement_variance, interpolate_missing_frames
+
+# HandLandmarker 초기화 (global)
+base_options = python.BaseOptions(model_asset_path=MP_HANDS_MODEL)
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    num_hands=2
+)
+hand_landmarker = vision.HandLandmarker.create_from_options(options)
 
 # parse segments from text file
 def load_segments(txt_path, split):
@@ -31,32 +42,64 @@ def load_segments(txt_path, split):
     return segs
 
 # 한 비디오(.avi)에서 (T,42,3) 전체 시퀀스 뽑기
+# def extract_bimanual_sequence(video_path):
+#     """
+#     Args:
+#         video_path: .avi 파일 경로
+#     Returns:
+#         ndarray of shape (T, 42, 3), dtype float32
+#         — 각 프레임마다 [L0...L20, R0...R20] 순
+#     """
+#     cap = cv2.VideoCapture(video_path)
+#     seq = []
+#     while True:
+#         ret, frame = cap.read()
+#         if not ret: break
+#         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#         res = hands.process(rgb)
+
+#         left  = [(0.,0.,0.)]*21
+#         right = [(0.,0.,0.)]*21
+#         if res.multi_hand_landmarks and res.multi_handedness:
+#             for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
+#                 coords21 = [(p.x, p.y, p.z) for p in lm.landmark]
+#                 if hd.classification[0].label == "Left":
+#                     left = coords21
+#                 else:
+#                     right = coords21
+#         seq.append(left + right)
+#     cap.release()
+#     return np.array(seq, dtype=np.float32)  # (T, 42, 3)
 def extract_bimanual_sequence(video_path):
-    """
-    Args:
-        video_path: .avi 파일 경로
-    Returns:
-        ndarray of shape (T, 42, 3), dtype float32
-        — 각 프레임마다 [L0...L20, R0...R20] 순
-    """
     cap = cv2.VideoCapture(video_path)
     seq = []
+
     while True:
         ret, frame = cap.read()
-        if not ret: break
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        res = hands.process(rgb)
+        if not ret:
+            break
 
-        left  = [(0.,0.,0.)]*21
-        right = [(0.,0.,0.)]*21
-        if res.multi_hand_landmarks and res.multi_handedness:
-            for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
-                coords21 = [(p.x, p.y, p.z) for p in lm.landmark]
-                if hd.classification[0].label == "Left":
-                    left = coords21
-                else:
-                    right = coords21
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = Image(image_format=image_format_pb2.ImageFormat.SRGB, data=rgb)
+        result = hand_landmarker.detect(mp_image)
+
+        left = [(0., 0., 0.)] * 21
+        right = [(0., 0., 0.)] * 21
+        
+        if result.hand_landmarks and result.handedness:
+            for landmarks, handed in zip(result.hand_landmarks, result.handedness):
+                score = handed[0].score
+                if score < 0.5:  # or 0.4, 실험적으로 조정
+                    continue  # skip low-confidence hands
+                coords = [(lm.x, lm.y, lm.z) for lm in landmarks]
+                label = handed[0].category_name
+                if label == "Left":
+                    left = coords
+                elif label == "Right":
+                    right = coords
+
         seq.append(left + right)
+
     cap.release()
     return np.array(seq, dtype=np.float32)  # (T, 42, 3)
 
@@ -93,6 +136,7 @@ def process_congd():
     phase_2_segs  = load_segments(valid_txt, split="test")
 
     all_segments = {**phase_1_segs, **phase_2_segs}
+    all_segments = phase_2_segs
     for video_id, seg_list in all_segments.items():
         print(f"Processing {video_id}...")
         split, class_folder, vid_name = video_id.split('/')
@@ -127,16 +171,29 @@ def process_congd():
             # 길이를 37에 맞춰 자르거나 패딩하기
             seg_seq = pad_or_trim(seg_seq, FRAMES)
 
+            
+            if compute_joint_movement_variance(seg_seq) < 0.001:
+                print(f"Skip {video_id} (low movement variance)")
+                continue
+
             # (3) 0이 하나라도 있으면 보간
             if np.any(seg_seq == 0):
+                 # (3.0) 0 비율이 너무 많으면 제거
+                zero_mask = (seg_seq == 0).all(axis=2)  # shape: (T, 42)
+                zero_ratio = zero_mask.sum() / (FRAMES * 42)
+                if zero_ratio > 0.3:
+                    print(f"Skip {video_id} (too many missing joints: {zero_ratio:.2f})")
+                    continue
                 seg_seq = interpolate_missing_frames(seg_seq)
 
             # (4) 저장
             out_name = f"{split}_{class_folder}_{vid_name}_{start:03d}-{end:03d}_lbl{label}.npy"
             out_path = os.path.join(CONGD_OUTPUT_DIR, out_name)
-            # np.save(out_path, seg_seq)
+            np.save(out_path, seg_seq)
             print(f"Saved: {out_path} → {seg_seq.shape}, label={label}")
 
 if __name__ == "__main__":
     process_congd()
-    hands.close()
+    # hands.close()
+    hand_landmarker.close()
+

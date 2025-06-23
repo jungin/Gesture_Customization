@@ -1,13 +1,22 @@
 import os
 
+
+
 FRAMES = 37
-JESTER_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/jester"
-CONGD_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/congd"
+EPOCHS = 20
+BATCH_SIZE = 64
+
+# JESTER_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/jester"
+# CONGD_BASE_DIR = "/Users/koh/Research/Codes/Gesture_Customization_github/data/congd"
+JESTER_BASE_DIR = "data/jester"
+CONGD_BASE_DIR = "data/congd"
 
 JESTER_INPUT_DIR = os.path.join(JESTER_BASE_DIR, "raw_data")
 JESTER_OUTPUT_DIR = os.path.join(JESTER_BASE_DIR, "skeletons")
 CONGD_INPUT_DIR = os.path.join(CONGD_BASE_DIR, "raw_data")
 CONGD_OUTPUT_DIR = os.path.join(CONGD_BASE_DIR, "skeletons")
+
+MP_HANDS_MODEL = "src/hand_landmarker.task"
 
 JESTER_LABELS = {0: 'Doing other things',
                  1: 'Drumming Fingers',
