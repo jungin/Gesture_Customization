@@ -6,19 +6,35 @@ from collections import defaultdict
 
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from mediapipe.framework.formats import image_format_pb2
-from mediapipe import Image
+import mediapipe as mp
 
 from src.variables import *
 from src.utility import pad_or_trim, compute_joint_movement_variance, interpolate_missing_frames
 
 # HandLandmarker 초기화 (global)
-base_options = python.BaseOptions(model_asset_path=MP_HANDS_MODEL)
+base_options = python.BaseOptions(
+    model_asset_path=MP_HANDS_MODEL,
+    delegate=python.Delegate.GPU
+)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
-    num_hands=2
+    num_hands=2,
+    running_mode=vision.RunningMode.VIDEO
 )
+# options = vision.HandLandmarkerOptions(
+#     base_options=base_options,
+#     num_hands=2
+# )
 hand_landmarker = vision.HandLandmarker.create_from_options(options)
+
+import threading
+from concurrent.futures import ThreadPoolExecutor
+thread_local = threading.local()
+def get_landmarker():
+    if not hasattr(thread_local, "lm"):
+        options.running_mode = vision.RunningMode.VIDEO
+        thread_local.lm = vision.HandLandmarker.create_from_options(options)
+    return thread_local.lm
 
 # parse segments from text file
 def load_segments(txt_path, split):
@@ -42,37 +58,19 @@ def load_segments(txt_path, split):
     return segs
 
 # 한 비디오(.avi)에서 (T,42,3) 전체 시퀀스 뽑기
-# def extract_bimanual_sequence(video_path):
-#     """
-#     Args:
-#         video_path: .avi 파일 경로
-#     Returns:
-#         ndarray of shape (T, 42, 3), dtype float32
-#         — 각 프레임마다 [L0...L20, R0...R20] 순
-#     """
-#     cap = cv2.VideoCapture(video_path)
-#     seq = []
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret: break
-#         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#         res = hands.process(rgb)
-
-#         left  = [(0.,0.,0.)]*21
-#         right = [(0.,0.,0.)]*21
-#         if res.multi_hand_landmarks and res.multi_handedness:
-#             for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
-#                 coords21 = [(p.x, p.y, p.z) for p in lm.landmark]
-#                 if hd.classification[0].label == "Left":
-#                     left = coords21
-#                 else:
-#                     right = coords21
-#         seq.append(left + right)
-#     cap.release()
-#     return np.array(seq, dtype=np.float32)  # (T, 42, 3)
 def extract_bimanual_sequence(video_path):
+    """
+    Args:
+        video_path: .avi 파일 경로
+    Returns:
+        ndarray of shape (T, 42, 3), dtype float32
+        — 각 프레임마다 [L0...L20, R0...R20] 순
+    """
     cap = cv2.VideoCapture(video_path)
     seq = []
+    
+    fps = cap.get(cv2.CAP_PROP_FPS)           # 예: 30.0
+    ms_per_frame = 1000.0 / fps              # 1프레임 당 밀리초
 
     while True:
         ret, frame = cap.read()
@@ -80,8 +78,14 @@ def extract_bimanual_sequence(video_path):
             break
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = Image(image_format=image_format_pb2.ImageFormat.SRGB, data=rgb)
+        rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+        mp_image = mp.Image(
+            mp.ImageFormat.SRGB,  # ✅ mediapipe 최상위 enum 사용
+            rgb                   # contiguous uint8 ndarray
+        )
         result = hand_landmarker.detect(mp_image)
+        mp_image = vision.Image.create_from_array(rgb, vision.ImageFormat.SRGB)
+        result = hand_landmarker.detect_for_video(mp_image, timestamp_ms)
 
         left = [(0., 0., 0.)] * 21
         right = [(0., 0., 0.)] * 21
@@ -136,7 +140,6 @@ def process_congd():
     phase_2_segs  = load_segments(valid_txt, split="test")
 
     all_segments = {**phase_1_segs, **phase_2_segs}
-    all_segments = phase_2_segs
     for video_id, seg_list in all_segments.items():
         print(f"Processing {video_id}...")
         split, class_folder, vid_name = video_id.split('/')

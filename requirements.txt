@@ -1,6 +1,0 @@
-panda
-numpy
-tqdm
-opencv-python
-pandarallel
-absl-py
