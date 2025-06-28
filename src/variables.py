@@ -1,7 +1,5 @@
 import os
 
-
-
 FRAMES = 37
 EPOCHS = 20
 BATCH_SIZE = 64

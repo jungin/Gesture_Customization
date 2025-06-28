@@ -4,6 +4,7 @@ import tensorflow as tf
 import numpy as np
 from src.st_gcn import STGCN  # 위에서 만든 stgcn_tf.py
 from src.variables import *  # JESTER_OUTPUT_DIR, etc.
+from src.utility import augment_features  # augment_features 함수가 있는 utility.py
 
 inv = {v: k for k, v in JESTER_LABELS.items()}
 
@@ -22,7 +23,7 @@ def build_metadata_congd(root_dir, pattern="*.npy"):
         meta.append((filepath, int(label) - 1))
     return meta
 
-meta = build_metadata_congd(CONGD_OUTPUT_DIR)
+meta = build_metadata_congd(CONGD_OUTPUT_DIR + '.old')
 split_ratio = 0.9
 split_idx = int(len(meta) * split_ratio)
 train_meta = meta[:split_idx]  # 처음 90%를 train
@@ -31,27 +32,53 @@ print(f"Train samples: {len(train_meta)}, Validation samples: {len(val_meta)}")
 
 # 2) tf.data.Dataset 생성
 def parse_fn(np_path, label):
-    # np_path: bytes, so 먼저 문자열로 변환
     path = np_path.decode('utf-8')
-    # (T, V, C) numpy 로드
-    seq = np.load(path)  
-    
-     # 채널별로 평균0, 표준편차1
+    seq = np.load(path)                 # (T, V, 3)
+
+    # 1) 표준화
     mean = seq.mean(axis=(0,1), keepdims=True)
     std  = seq.std(axis=(0,1), keepdims=True)
-    seq = (seq - mean) / (std + 1e-6)
- 
-   # (T, V, C) → (C, V, T)
-    seq = np.transpose(seq, (2,1,0)).astype(np.float32)
+    seq = (seq - mean) / (std + 1e-6)   # (T, V, 3)
+
+    # 2) 롤·턴 방향성 피처 추가 (총 7채널)
+    seq = augment_features(seq)         # (T, V, 7)
+
+    # 3) (T, V, C) → (C, V, T)
+    seq = np.transpose(seq, (2,1,0)).astype(np.float32)  # (7, V, T)
     return seq, label
 
 def tf_parse_fn(np_path, label):
-    # tf.numpy_function을 사용해 numpy 로직 실행
-    seq, lbl = tf.numpy_function(parse_fn, [np_path, label], [tf.float32, tf.int32])
-    # shape 힌트 지정 (필수는 아니지만 좋음)
-    seq.set_shape((3, 42, 37))   # C=3, V=42, T=37
+    seq, lbl = tf.numpy_function(parse_fn, [np_path, label],
+                                 [tf.float32, tf.int32])
+    # 채널 수를 7로 변경
+    seq.set_shape((7, 42, 37))
     lbl.set_shape(())
     return seq, lbl
+
+
+# # 2) tf.data.Dataset 생성
+# def parse_fn(np_path, label):
+#     # np_path: bytes, so 먼저 문자열로 변환
+#     path = np_path.decode('utf-8')
+#     # (T, V, C) numpy 로드
+#     seq = np.load(path)  
+    
+#      # 채널별로 평균0, 표준편차1
+#     mean = seq.mean(axis=(0,1), keepdims=True)
+#     std  = seq.std(axis=(0,1), keepdims=True)
+#     seq = (seq - mean) / (std + 1e-6)
+ 
+#    # (T, V, C) → (C, V, T)
+#     seq = np.transpose(seq, (2,1,0)).astype(np.float32)
+#     return seq, label
+
+# def tf_parse_fn(np_path, label):
+#     # tf.numpy_function을 사용해 numpy 로직 실행
+#     seq, lbl = tf.numpy_function(parse_fn, [np_path, label], [tf.float32, tf.int32])
+#     # shape 힌트 지정 (필수는 아니지만 좋음)
+#     seq.set_shape((3, 42, 37))   # C=3, V=42, T=37
+#     lbl.set_shape(())
+#     return seq, lbl
 
 AUTOTUNE = tf.data.AUTOTUNE
 
@@ -113,62 +140,187 @@ for l, r in zip(left_tips, right_tips):
 D = np.diag(1.0 / np.sqrt(A.sum(axis=1)))
 A = D @ A @ D
 
-model = STGCN(in_channels=3, num_class=249, A=A, num_layers=6)  # ConGD
+model = STGCN(in_channels=7, num_class=249, A=A, num_layers=6)  # ConGD
 
-opt = tf.keras.optimizers.Adam(learning_rate=5e-7)
-loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-3),
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy']
+)
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
-train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
-train_ds = train_ds.shuffle(len(train_paths))
-train_ds = train_ds.map(tf_parse_fn, num_parallel_calls=AUTOTUNE)
-# ← 여기서 .repeat() 추가
-train_ds = train_ds.repeat()\
-                   .batch(BATCH_SIZE)\
-                   .prefetch(AUTOTUNE)
+early_stop = EarlyStopping(
+    monitor='val_loss',
+    patience=8,  # 8 epoch 이상 성능 개선 없으면 중단
+    restore_best_weights=True
+)
 
-@tf.function
-def train_step(x, y):
-    with tf.GradientTape() as tape:
-        logits = model(x, training=True)
-        loss   = loss_fn(y, logits)
-    grads = tape.gradient(loss, model.trainable_variables)
-    grads = [tf.clip_by_norm(g, 0.5)   if g is not None else None for g in grads]
-    grads = [tf.clip_by_value(g, -0.1, 0.1) if g is not None else None for g in grads]
-    opt.apply_gradients(zip(grads, model.trainable_variables))
-    return loss
+checkpoint = ModelCheckpoint(
+    'models/st_gcn_congd_best_model_add_channel.keras',
+    monitor='val_accuracy',
+    save_best_only=True,
+    verbose=1
+)
 
-steps_per_epoch = len(train_paths) // BATCH_SIZE
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+lr_sched = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
+
+# 4) 학습
+model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=100,
+    callbacks=[early_stop, checkpoint, lr_sched],
+)
+
+# 5) Feature Extractor 생성
+# 5.1) blocks + global_pool 을 순차적으로 묶어 Feature Extractor 생성
+feature_extractor = tf.keras.Sequential(
+    model.blocks + [model.global_pool],
+    name="stgcn_feature_extractor"
+)
+
+# 빈 리스트 준비
+x_list, y_list = [], []
+
+# val_ds 순회하며 배치별로 수집
+for x_batch, y_batch in val_ds:
+    x_list.append(x_batch.numpy())     # (batch_size, C, V, T)
+    y_list.append(y_batch.numpy())     # (batch_size,)
+
+# 리스트를 하나의 배열로 합치기
+x_val = np.concatenate(x_list, axis=0)  # (N_val, C, V, T)
+y_val = np.concatenate(y_list, axis=0)  # (N_val,)
+
+# embedding 추출 
+embeddings = feature_extractor(x_val, training=False)  # shape: (N_val, feature_dim)
+
+import numpy as np
+import matplotlib.pyplot as plt
+import umap
+from sklearn.metrics import (
+    silhouette_score,
+    calinski_harabasz_score,
+    davies_bouldin_score,
+    confusion_matrix,
+    classification_report
+)
+
+# 1) 정량적 클러스터링 지표 계산
+sil_score = silhouette_score(embeddings, y_val)
+ch_score  = calinski_harabasz_score(embeddings, y_val)
+db_score  = davies_bouldin_score(embeddings, y_val)
+print(f"Silhouette Score:        {sil_score:.4f}")
+print(f"Calinski–Harabasz Score: {ch_score:.1f}")
+print(f"Davies–Bouldin Score:    {db_score:.4f}\n")
+
+# 2) UMAP 2D 시각화
+reducer = umap.UMAP(n_components=2, random_state=42)
+emb2d   = reducer.fit_transform(embeddings)  # (N_val, 2)
+
+plt.figure(figsize=(8,8))
+scatter = plt.scatter(
+    emb2d[:,0], emb2d[:,1],
+    c=y_val, s=5, cmap='tab20', alpha=0.8
+)
+plt.legend(*scatter.legend_elements(), title="Classes",
+           bbox_to_anchor=(1.05,1))
+plt.title("UMAP Projection of ST-GCN Embeddings")
+plt.xlabel("UMAP-1"); plt.ylabel("UMAP-2")
+plt.tight_layout()
+plt.show()
+
+
+# 1) Validation 데이터셋에서 y_true, y_pred 수집
+y_true = []
+y_pred = []
+
+for x_batch, y_batch in val_ds:
+    # 예측 (logits 또는 확률)
+    logits = model.predict(x_batch, verbose=0)
+    preds = np.argmax(logits, axis=1)
+    
+    y_pred.extend(preds.tolist())
+    y_true.extend(y_batch.numpy().tolist())
+
+y_true = np.array(y_true)
+y_pred = np.array(y_pred)
+num_classes = np.max(y_true) + 1
+
+
+# 2) Confusion Matrix 계산 및 정규화 (행 기준)
+cm = confusion_matrix(y_true, y_pred, labels=np.arange(num_classes))
+cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+
+# 3) Confusion Matrix 시각화
+plt.figure(figsize=(8, 6))
+plt.imshow(cm_norm, aspect='auto')   # 기본 colormap 사용
+plt.colorbar()
+plt.title("Normalized Confusion Matrix")
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.xticks(np.arange(num_classes), np.arange(num_classes), rotation=90)
+plt.yticks(np.arange(num_classes), np.arange(num_classes))
+plt.tight_layout()
+plt.show()
+
+# 4) Classification Report 출력
+print("Classification Report:\n")
+print(classification_report(y_true, y_pred, digits=4))
+
+
+
+# opt = tf.keras.optimizers.Adam(learning_rate=1e-3)
+# loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+# train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
+# train_ds = train_ds.shuffle(len(train_paths))
+# train_ds = train_ds.map(tf_parse_fn, num_parallel_calls=AUTOTUNE)
+# # ← 여기서 .repeat() 추가
+# train_ds = train_ds.repeat()\
+#                    .batch(BATCH_SIZE)\
+#                    .prefetch(AUTOTUNE)
+
+# @tf.function
+# def train_step(x, y):
+#     with tf.GradientTape() as tape:
+#         logits = model(x, training=True)
+#         loss   = loss_fn(y, logits)
+#     grads = tape.gradient(loss, model.trainable_variables)
+#     grads = [tf.clip_by_norm(g, 1.0) if g is not None else None for g in grads]
+#     opt.apply_gradients(zip(grads, model.trainable_variables))
+#     train_acc_metric.update_state(y, logits)
+#     return loss
+
+# steps_per_epoch = len(train_paths) // BATCH_SIZE
+
+# for lr in [1e-4, 3e-4, 1e-3]:
+#     opt = tf.keras.optimizers.Adam(learning_rate=lr)
+#     model.compile(optimizer=opt, loss=loss_fn, metrics=['accuracy'])
+#     print("Testing LR =", lr)
+#     history = model.fit(train_ds.take(steps_per_epoch),
+#                         validation_data=val_ds,
+#                         epochs=3)
+#     print()
+
+# # 1) Metric 객체 생성
+# train_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+# val_acc_metric   = tf.keras.metrics.SparseCategoricalAccuracy()
+
 # for epoch in range(EPOCHS):
-#     for x_batch, y_batch in train_ds.take(steps_per_epoch):
-#         l = train_step(x_batch, y_batch)
-#     print(f"Epoch {epoch} | Loss: {l.numpy():.4f}")
-
-# 1) Metric 객체 생성
-train_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
-val_acc_metric   = tf.keras.metrics.SparseCategoricalAccuracy()
-
-for epoch in range(EPOCHS):
-    # --- Training ---
-    train_acc_metric.reset_state()
-    for x_batch, y_batch in train_ds.take(steps_per_epoch):
-        # forward/backward & loss 계산
-        with tf.GradientTape() as tape:
-            logits = model(x_batch, training=True)
-            loss   = loss_fn(y_batch, logits)
-        grads = tape.gradient(loss, model.trainable_variables)
-        # gradient clipping…
-        opt.apply_gradients(zip(grads, model.trainable_variables))
-        
-        # Accuracy 업데이트
-        train_acc_metric.update_state(y_batch, logits)
+#     # Training
+#     train_acc_metric.reset_state()
+#     for step, (x_batch, y_batch) in enumerate(train_ds.take(steps_per_epoch)):
+#         loss = train_step(x_batch, y_batch)
+#         if step % 100 == 0:
+#             tf.print(f"epoch {epoch} step {step} loss {loss:.4f}")
+#     train_acc = train_acc_metric.result()
+#     tf.print(f"Epoch {epoch} Train Acc: {train_acc:.4f}")
     
-    train_acc = train_acc_metric.result().numpy()
-    print(f"Epoch {epoch} — Loss: {loss:.4f}, Train Acc: {train_acc:.4f}")
-    
-    # --- Validation ---
-    val_acc_metric.reset_state()
-    for x_batch, y_batch in val_ds:
-        val_logits = model(x_batch, training=False)
-        val_acc_metric.update_state(y_batch, val_logits)
-    val_acc = val_acc_metric.result().numpy()
-    print(f"           Val   Acc: {val_acc:.4f}")
+#     # --- Validation ---
+#     val_acc_metric.reset_state()
+#     for x_batch, y_batch in val_ds:
+#         val_logits = model(x_batch, training=False)
+#         val_acc_metric.update_state(y_batch, val_logits)
+#     val_acc = val_acc_metric.result().numpy()
+#     print(f"           Val   Acc: {val_acc:.4f}")

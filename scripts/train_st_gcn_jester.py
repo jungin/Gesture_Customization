@@ -4,6 +4,7 @@ import tensorflow as tf
 import numpy as np
 from src.st_gcn import STGCN  # 위에서 만든 stgcn_tf.py
 from src.variables import *  # JESTER_OUTPUT_DIR, etc.
+from src.utility import augment_features  # augment_features 함수가 있는 utility.py
 
 inv = {v: k for k, v in JESTER_LABELS.items()}
 
@@ -30,27 +31,52 @@ print(f"Train samples: {len(train_meta)}, Validation samples: {len(val_meta)}")
 
 # 2) tf.data.Dataset 생성
 def parse_fn(np_path, label):
-    # np_path: bytes, so 먼저 문자열로 변환
     path = np_path.decode('utf-8')
-    # (T, V, C) numpy 로드
-    seq = np.load(path)  
-    
-     # 채널별로 평균0, 표준편차1
+    seq = np.load(path)                 # (T, V, 3)
+
+    # 1) 표준화
     mean = seq.mean(axis=(0,1), keepdims=True)
     std  = seq.std(axis=(0,1), keepdims=True)
-    seq = (seq - mean) / (std + 1e-6)
-    
-    # (T, V, C) → (C, V, T)
-    seq = np.transpose(seq, (2,1,0)).astype(np.float32)
+    seq = (seq - mean) / (std + 1e-6)   # (T, V, 3)
+
+    # 2) 롤·턴 방향성 피처 추가 (총 7채널)
+    seq = augment_features(seq)         # (T, V, 7)
+
+    # 3) (T, V, C) → (C, V, T)
+    seq = np.transpose(seq, (2,1,0)).astype(np.float32)  # (7, V, T)
     return seq, label
 
 def tf_parse_fn(np_path, label):
-    # tf.numpy_function을 사용해 numpy 로직 실행
-    seq, lbl = tf.numpy_function(parse_fn, [np_path, label], [tf.float32, tf.int32])
-    # shape 힌트 지정 (필수는 아니지만 좋음)
-    seq.set_shape((3, 42, 37))   # C=3, V=42, T=37
+    seq, lbl = tf.numpy_function(parse_fn, [np_path, label],
+                                 [tf.float32, tf.int32])
+    # 채널 수를 7로 변경
+    seq.set_shape((7, 42, 37))
     lbl.set_shape(())
     return seq, lbl
+
+# # 2) tf.data.Dataset 생성
+# def parse_fn(np_path, label):
+#     # np_path: bytes, so 먼저 문자열로 변환
+#     path = np_path.decode('utf-8')
+#     # (T, V, C) numpy 로드
+#     seq = np.load(path)  
+    
+#      # 채널별로 평균0, 표준편차1
+#     mean = seq.mean(axis=(0,1), keepdims=True)
+#     std  = seq.std(axis=(0,1), keepdims=True)
+#     seq = (seq - mean) / (std + 1e-6)
+    
+#     # (T, V, C) → (C, V, T)
+#     seq = np.transpose(seq, (2,1,0)).astype(np.float32)
+#     return seq, label
+
+# def tf_parse_fn(np_path, label):
+#     # tf.numpy_function을 사용해 numpy 로직 실행
+#     seq, lbl = tf.numpy_function(parse_fn, [np_path, label], [tf.float32, tf.int32])
+#     # shape 힌트 지정 (필수는 아니지만 좋음)
+#     seq.set_shape((3, 42, 37))   # C=3, V=42, T=37
+#     lbl.set_shape(())
+#     return seq, lbl
 
 AUTOTUNE = tf.data.AUTOTUNE
 
@@ -112,7 +138,7 @@ for l, r in zip(left_tips, right_tips):
 D = np.diag(1.0 / np.sqrt(A.sum(axis=1)))
 A = D @ A @ D
 
-model = STGCN(in_channels=3, num_class=27, A=A, num_layers=9)
+model = STGCN(in_channels=7, num_class=27, A=A, num_layers=9)
 
 model.compile(
     optimizer=tf.keras.optimizers.Adam(1e-3),
@@ -129,19 +155,79 @@ early_stop = EarlyStopping(
 )
 
 checkpoint = ModelCheckpoint(
-    'models/st_gcn_jester_best_model.keras',
+    'models/st_gcn_jester_best_model_add_channel.keras',
     monitor='val_accuracy',
     save_best_only=True,
     verbose=1
 )
+
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+lr_sched = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
 
 # 4) 학습
 model.fit(
     train_ds,
     validation_data=val_ds,
     epochs=100,
-    callbacks=[early_stop, checkpoint],
+    callbacks=[early_stop, checkpoint, lr_sched],
 )
+
+# 5) Feature Extractor 생성
+# 5.1) blocks + global_pool 을 순차적으로 묶어 Feature Extractor 생성
+feature_extractor = tf.keras.Sequential(
+    model.blocks + [model.global_pool],
+    name="stgcn_feature_extractor"
+)
+
+# 빈 리스트 준비
+x_list, y_list = [], []
+
+# val_ds 순회하며 배치별로 수집
+for x_batch, y_batch in val_ds:
+    x_list.append(x_batch.numpy())     # (batch_size, C, V, T)
+    y_list.append(y_batch.numpy())     # (batch_size,)
+
+# 리스트를 하나의 배열로 합치기
+x_val = np.concatenate(x_list, axis=0)  # (N_val, C, V, T)
+y_val = np.concatenate(y_list, axis=0)  # (N_val,)
+
+# embedding 추출 
+embeddings = feature_extractor(x_val, training=False)  # shape: (N_val, feature_dim)
+
+import numpy as np
+import matplotlib.pyplot as plt
+import umap
+from sklearn.metrics import (
+    silhouette_score,
+    calinski_harabasz_score,
+    davies_bouldin_score,
+    confusion_matrix,
+    classification_report
+)
+
+# 1) 정량적 클러스터링 지표 계산
+sil_score = silhouette_score(embeddings, y_val)
+ch_score  = calinski_harabasz_score(embeddings, y_val)
+db_score  = davies_bouldin_score(embeddings, y_val)
+print(f"Silhouette Score:        {sil_score:.4f}")
+print(f"Calinski–Harabasz Score: {ch_score:.1f}")
+print(f"Davies–Bouldin Score:    {db_score:.4f}\n")
+
+# 2) UMAP 2D 시각화
+reducer = umap.UMAP(n_components=2, random_state=42)
+emb2d   = reducer.fit_transform(embeddings)  # (N_val, 2)
+
+plt.figure(figsize=(8,8))
+scatter = plt.scatter(
+    emb2d[:,0], emb2d[:,1],
+    c=y_val, s=5, cmap='tab20', alpha=0.8
+)
+plt.legend(*scatter.legend_elements(), title="Classes",
+           bbox_to_anchor=(1.05,1))
+plt.title("UMAP Projection of ST-GCN Embeddings")
+plt.xlabel("UMAP-1"); plt.ylabel("UMAP-2")
+plt.tight_layout()
+plt.show()
 
 # 5) 평가
 import matplotlib.pyplot as plt
