@@ -1,0 +1,33 @@
+{
+  "train": [
+    "Rolling Hand Forward",
+    "Sliding Two Fingers Left",
+    "Zooming Out With Two Fingers",
+    "Pulling Hand In",
+    "Swiping Left",
+    "Pulling Two Fingers In",
+    "Zooming In With Two Fingers",
+    "Thumb Up",
+    "Rolling Hand Backward",
+    "Thumb Down",
+    "Shaking Hand",
+    "Swiping Up",
+    "Turning Hand Clockwise",
+    "Drumming Fingers",
+    "Zooming In With Full Hand"
+  ],
+  "val": [
+    "Zooming Out With Full Hand",
+    "Swiping Right",
+    "Pushing Two Fingers Away",
+    "Pushing Hand Away",
+    "Sliding Two Fingers Down"
+  ],
+  "test": [
+    "Turning Hand Counterclockwise",
+    "Sliding Two Fingers Right",
+    "Stop Sign",
+    "Swiping Down",
+    "Sliding Two Fingers Up"
+  ]
+}

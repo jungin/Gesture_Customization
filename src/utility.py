@@ -6,6 +6,17 @@ import mediapipe as mp
 import tensorflow as tf
 from src.variables import *
 
+def prepare_mapping_jester(base_dir, exclude_none=True, min_samples=0):
+    paths = glob(os.path.join(base_dir, 'Train', '*.npy')) + \
+            glob(os.path.join(base_dir, 'Validation', '*.npy'))
+    mapping = {}
+    for p in paths:
+        label = os.path.basename(p).split('_',1)[1].rsplit('.npy',1)[0]
+        if exclude_none and label == 'None':
+            continue
+        mapping.setdefault(label, []).append(p)
+    return {cls: ps for cls, ps in mapping.items() if len(ps) >= min_samples}
+
 
 def build_metadata_jester(root_dir, pattern="*.npy"):
     """
@@ -220,5 +231,40 @@ def augment_features(seq):
     turn_vel_feat   = np.tile(turn_vel[:, None, None],   (1, V, 1))
     # Concatenate: original (T,V,3) + roll ang & vel + turn ang & vel = (T,V,7)
     return np.concatenate([seq, roll_angle_feat, roll_vel_feat, turn_angle_feat, turn_vel_feat], axis=2)
+
+
+def build_hand_adjacency(v_hand=21):
+    # Define edges for one hand
+    edges = [
+        (0,1),(1,2),(2,3),(3,4),
+        (0,5),(5,6),(6,7),(7,8),
+        (0,9),(9,10),(10,11),(11,12),
+        (0,13),(13,14),(14,15),(15,16),
+        (0,17),(17,18),(18,19),(19,20)
+    ]
+    A = np.zeros((v_hand, v_hand), dtype=np.float32)
+    for i, j in edges:
+        A[i, j] = A[j, i] = 1
+    np.fill_diagonal(A, 1)
+    D = np.diag(1.0 / np.sqrt(A.sum(axis=1)))
+    return D @ A @ D
+
+
+def build_two_hand_adjacency():
+    A_hand = build_hand_adjacency()
+    V_hand = A_hand.shape[0]
+    V = V_hand * 2
+    A = np.zeros((V, V), dtype=np.float32)
+    # block-diagonal for each hand
+    A[:V_hand, :V_hand] = A_hand
+    A[V_hand:, V_hand:] = A_hand
+    # inter-hand edges (wrist and fingertips)
+    A[0, V_hand] = A[V_hand, 0] = 1
+    left_tips = [4,8,12,16,20]
+    right_tips = [V_hand + idx for idx in left_tips]
+    for l, r in zip(left_tips, right_tips):
+        A[l, r] = A[r, l] = 1
+    D = np.diag(1.0 / np.sqrt(A.sum(axis=1)))
+    return D @ A @ D
 
 
