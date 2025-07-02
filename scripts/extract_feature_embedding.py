@@ -65,7 +65,7 @@ model.load_weights('models/st_gcn_jester_best_model_add_channel.keras')
 
 # 4) Feature Extractor 생성 & build
 feature_extractor = tf.keras.Sequential(model.blocks + [model.global_pool])
-_ = feature_extractor(tf.zeros((1, 7, 42, 37)), training=False)
+_ = feature_extractor(tf.zeros((1, 3, 42, 37)), training=False)
 
 
 AUTOTUNE = tf.data.AUTOTUNE
